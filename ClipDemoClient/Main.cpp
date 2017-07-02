@@ -1,8 +1,10 @@
-#include <locale.h>
+ï»¿#include <locale.h>
 #include <windows.h>
 #include <mmsystem.h>
 #include <tchar.h>
 #include <vector>
+#include <ctype.h>
+#include <mysql.h>
 
 #if _DEBUG
 #define _CRTDBG_MAP_ALLOC
@@ -11,37 +13,47 @@
 #endif
 
 
-static void Draw(HWND hWnd);
+static void Draw();
 static void DrawPanel(HDC hdc);
-static void ShowText(HDC hdc, LPSTR str, POINT point);
-static HWND CreateTextBox(HWND hWnd, POINT point, int width, bool isReadOnly);
-static HWND CreateButton(HWND hWnd, POINT point, int width, int height, TCHAR caption[]);
+static void ShowText(HDC hdc, LPCTSTR str, const POINT& pPoint);
+static HWND CreateTextBox(const POINT& rPoint, int width, bool isReadOnly);
+static HWND CreateButton(const POINT& rPoint, int width, int height, LPCTSTR caption);
 static HFONT SetFont(LPCTSTR fontName, int fontSize);
 static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp);
+static LRESULT CALLBACK EditWindowProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp);
+static void OnBtnVerificateClicked();
+static bool Validate(LPCTSTR txtMagStr, int* pAccountId);
+static bool GetCard(int accountId, LPCTSTR magStr, LPTSTR companyName, LPTSTR nameOnCard, LPTSTR cardNumber);
 
 static const TCHAR* TITLE = TEXT("CLIP Demo Client");
 static const int WINDOW_DEFAULT_HEIGHT = 630;
 static const int WINDOW_DEFAULT_WIDTH = 1120;
+static const int LENGTH_OF_MAG = 79;
+static const int LENGTH_OF_COMPANY_NAME = 100;
+static const int LENGTH_OF_NANE_ON_CARD = 100;
+static const int LENGTH_OF_CARD_NUMBER = 100;
 
+static HWND g_frmMain;
 static HWND g_txtMag;
 static HWND g_txtCompany;
-static HWND g_txtName;
-static HWND g_txtNumber;
+static HWND g_txtNameOnCard;
+static HWND g_txtCardNumber;
 static HWND g_txtAccountId;
 
 static HWND g_btnVerificate;
 static HWND g_btnClear;
 
+static WNDPROC g_defEditWndProc;
+
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, PSTR /*lpCmdLine*/, int /*nCmdShow*/) {
 	::_CrtSetDbgFlag(_CRTDBG_LEAK_CHECK_DF | _CRTDBG_ALLOC_MEM_DF);
 
-	_tsetlocale(LC_ALL, "Japanese");            //ƒƒP[ƒ‹i’nˆæŒ¾Œêj‚ğ“ú–{Œê‚ÅƒZƒbƒg
+	_tsetlocale(LC_ALL, "Japanese");            //ãƒ­ã‚±ãƒ¼ãƒ«ï¼ˆåœ°åŸŸè¨€èªï¼‰ã‚’æ—¥æœ¬èªã§ã‚»ãƒƒãƒˆ
 
-	HWND hWnd;
 	WNDCLASS winc;
 	
-	// Windowsî•ñ‚Ìİ’è
+	// Windowsæƒ…å ±ã®è¨­å®š
 	winc.style = CS_HREDRAW | CS_VREDRAW;
 	winc.lpfnWndProc = WndProc;
 	winc.cbClsExtra = winc.cbWndExtra = 0;
@@ -51,14 +63,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, PSTR /*lpCm
 	winc.hbrBackground = (HBRUSH)GetStockObject(WHITE_BRUSH);
 	winc.lpszMenuName = NULL;
 	winc.lpszClassName = TITLE;
-	// Windows‚Ì“o˜^
+	// Windowsã®ç™»éŒ²
 	if (!RegisterClass(&winc)) return 0;
 
-	// Windows‚Ì¶¬
+	// Windowsã®ç”Ÿæˆ
 	int dh = GetSystemMetrics(SM_CYCAPTION) + GetSystemMetrics(SM_CYFRAME) * 2;
 	int dw = GetSystemMetrics(SM_CXFRAME) * 2;
 
-	hWnd = CreateWindow(
+	g_frmMain = CreateWindow(
 		TITLE,
 		TITLE,
 		WS_OVERLAPPEDWINDOW | WS_VISIBLE,
@@ -68,16 +80,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, PSTR /*lpCm
 		WINDOW_DEFAULT_HEIGHT + dh,		// Height
 		NULL, NULL, hInstance, NULL
 	);
-	if (!hWnd) return 0;
+	if (!g_frmMain) return 0;
 
-	g_txtMag = CreateTextBox(hWnd, POINT{ 150, 100 }, 700, false);
-	g_txtCompany = CreateTextBox(hWnd, POINT{ 200, 250 }, 300, true);
-	g_txtName = CreateTextBox(hWnd, POINT{ 200, 300 }, 300, true);
-	g_txtNumber = CreateTextBox(hWnd, POINT{ 200, 350 }, 300, true);
-	g_txtAccountId = CreateTextBox(hWnd, POINT{ 200, 500 }, 50, false);
+	g_txtMag = CreateTextBox(POINT{ 150, 100 }, 700, false);
+	g_txtCompany = CreateTextBox(POINT{ 200, 250 }, 300, true);
+	g_txtNameOnCard = CreateTextBox(POINT{ 200, 300 }, 300, true);
+	g_txtCardNumber = CreateTextBox(POINT{ 200, 350 }, 300, true);
+	g_txtAccountId = CreateTextBox(POINT{ 200, 500 }, 50, false);
+	SetWindowText(g_txtAccountId, _T("10"));
+	SetFocus(g_txtMag);
+	// ç£æ°—æƒ…å ±ã®ãƒ†ã‚­ã‚¹ãƒˆãƒœãƒƒã‚¯ã‚¹ã¯Enterã‚­ãƒ¼æŠ¼ä¸‹æ¤œå‡ºã®ãŸã‚ã‚µãƒ–ã‚¯ãƒ©ã‚¹åŒ–
+	g_defEditWndProc = (WNDPROC)SetWindowLongPtr(g_txtMag, GWLP_WNDPROC, (LONG_PTR)EditWindowProc);
 
-	g_btnVerificate = CreateButton(hWnd, POINT{ 870, 100 }, 53, 24, _T("Æ‡"));
-	g_btnClear = CreateButton(hWnd, POINT{ 930, 100 }, 65, 24, _T("ƒNƒŠƒA"));
+	g_btnVerificate = CreateButton(POINT{ 870, 100 }, 53, 24, _T("ç…§åˆ"));
+	g_btnClear = CreateButton(POINT{ 930, 100 }, 65, 24, _T("ã‚¯ãƒªã‚¢"));
 
 	MSG msg;
 	ZeroMemory(&msg, sizeof(msg));
@@ -89,23 +105,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, PSTR /*lpCm
 	return (int)msg.wParam;	
 }
 
-static void Draw(HWND hWnd) {
-	HDC hdc;
+static void Draw() {
 	PAINTSTRUCT paint;
-	hdc = BeginPaint(hWnd, &paint);
+	HDC hdc = BeginPaint(g_frmMain, &paint);
 
 	HFONT hFont = SetFont(_T("Myrica M"), 16);
 	SelectObject(hdc, hFont);
 
 	DrawPanel(hdc);
-	ShowText(hdc, _T("¥‹Cî•ñ"), POINT{ 50, 100 });
-	ShowText(hdc, _T("ƒJ[ƒh‰ïĞ"), POINT{ 100, 250 });
-	ShowText(hdc, _T("“o˜^Ò–¼"), POINT{ 100, 300 });
-	ShowText(hdc, _T("ƒJ[ƒh”Ô†"), POINT{ 100, 350 });
-	ShowText(hdc, _T("ƒAƒJƒEƒ“ƒgID"), POINT{ 50, 500 });
+	ShowText(hdc, _T("ç£æ°—æƒ…å ±"), POINT{ 50, 100 });
+	ShowText(hdc, _T("ã‚«ãƒ¼ãƒ‰ä¼šç¤¾"), POINT{ 100, 250 });
+	ShowText(hdc, _T("ç™»éŒ²è€…å"), POINT{ 100, 300 });
+	ShowText(hdc, _T("ã‚«ãƒ¼ãƒ‰ç•ªå·"), POINT{ 100, 350 });
+	ShowText(hdc, _T("ã‚¢ã‚«ã‚¦ãƒ³ãƒˆID"), POINT{ 50, 500 });
 
 	DeleteObject(hFont);
-	EndPaint(hWnd, &paint);
+	EndPaint(g_frmMain, &paint);
 }
 
 static void DrawPanel(HDC hdc) {
@@ -123,55 +138,49 @@ static void DrawPanel(HDC hdc) {
 	DeleteObject(hBrush);
 }
 
-static void ShowText(HDC hdc, LPSTR str, POINT point) {
-	TextOut(hdc, point.x, point.y, str, _tcslen(str));
+static void ShowText(HDC hdc, LPCTSTR str, const POINT& rPoint) {
+	TextOut(hdc, rPoint.x, rPoint.y, str, static_cast<int>(_tcslen(str)));
 }
 
-static HWND CreateTextBox(HWND hWnd, POINT point, int width, bool isReadOnly) {
-	static int windowId = 0;
-	windowId++;
-
+static HWND CreateTextBox(const POINT& rPoint, int width, bool isReadOnly) {
 	HINSTANCE hInstance = GetModuleHandle(NULL);
-	HWND hEdit = CreateWindow(
-		_T("EDIT"),			// ƒEƒBƒ“ƒhƒEƒNƒ‰ƒX–¼
-		NULL,				// ƒLƒƒƒvƒVƒ‡ƒ“
-		WS_CHILD | WS_VISIBLE | WS_BORDER | ES_LEFT,	// ƒXƒ^ƒCƒ‹w’è	
-		point.x,			// x
-		point.y,			// y
-		width,				// •
-		20,					// ‚‚³
-		hWnd,				// eƒEƒBƒ“ƒhƒE
-		(HMENU)windowId,	// ƒƒjƒ…[ƒnƒ“ƒhƒ‹‚Ü‚½‚ÍqƒEƒBƒ“ƒhƒEID
-		hInstance,			// ƒCƒ“ƒXƒ^ƒ“ƒXƒnƒ“ƒhƒ‹
-		NULL				// ‚»‚Ì‘¼‚Ìì¬ƒf[ƒ^
-	);
+	HWND hTextBox = CreateWindow(
+						_T("EDIT"),										// ã‚¦ã‚£ãƒ³ãƒ‰ã‚¦ã‚¯ãƒ©ã‚¹å
+						NULL,											// ã‚­ãƒ£ãƒ—ã‚·ãƒ§ãƒ³
+						WS_CHILD | WS_VISIBLE | WS_BORDER | ES_LEFT,	// ã‚¹ã‚¿ã‚¤ãƒ«æŒ‡å®š	
+						rPoint.x,										// x
+						rPoint.y,										// y
+						width,											// å¹…
+						20,												// é«˜ã•
+						g_frmMain,										// è¦ªã‚¦ã‚£ãƒ³ãƒ‰ã‚¦
+						NULL,				// ãƒ¡ãƒ‹ãƒ¥ãƒ¼ãƒãƒ³ãƒ‰ãƒ«ã¾ãŸã¯å­ã‚¦ã‚£ãƒ³ãƒ‰ã‚¦ID
+						hInstance,										// ã‚¤ãƒ³ã‚¹ã‚¿ãƒ³ã‚¹ãƒãƒ³ãƒ‰ãƒ«
+						NULL											// ãã®ä»–ã®ä½œæˆãƒ‡ãƒ¼ã‚¿
+					);
 
 	HFONT hFont = SetFont(_T("Myrica M"), 16);
-	SendMessage(hEdit, WM_SETFONT, (WPARAM)hFont, MAKELPARAM(false, 0));
+	SendMessage(hTextBox, WM_SETFONT, (WPARAM)hFont, MAKELPARAM(false, 0));
 
 	if (isReadOnly) {
-		SendMessage(hEdit, EM_SETREADONLY, 1, 0);
+		SendMessage(hTextBox, EM_SETREADONLY, 1, 0);
 	}
-	return hEdit;
+	return hTextBox;
 }
 
-static HWND CreateButton(HWND hWnd, POINT point, int width, int height, TCHAR caption[]) {
-	static int windowId = 10;
-	windowId++;
-
+static HWND CreateButton(const POINT& rPoint, int width, int height, LPCTSTR caption) {
 	HINSTANCE hInstance = GetModuleHandle(NULL);
 	HWND hButton = CreateWindow(
-						_T("BUTTON"),		// ƒEƒBƒ“ƒhƒEƒNƒ‰ƒX–¼
-						caption,			// ƒLƒƒƒvƒVƒ‡ƒ“
-						WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,	// ƒXƒ^ƒCƒ‹w’è	
-						point.x,			// x
-						point.y, 			// y
-						width, 				// •
-						height,				// ‚‚³
-						hWnd, 				// eƒEƒBƒ“ƒhƒE
-						(HMENU)windowId, 	// ƒƒjƒ…[ƒnƒ“ƒhƒ‹‚Ü‚½‚ÍqƒEƒBƒ“ƒhƒEID
-						hInstance, 			// ƒCƒ“ƒXƒ^ƒ“ƒXƒnƒ“ƒhƒ‹
-						NULL				// ‚»‚Ì‘¼‚Ìì¬ƒf[ƒ^
+						_T("BUTTON"),							// ã‚¦ã‚£ãƒ³ãƒ‰ã‚¦ã‚¯ãƒ©ã‚¹å
+						caption,								// ã‚­ãƒ£ãƒ—ã‚·ãƒ§ãƒ³
+						WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,	// ã‚¹ã‚¿ã‚¤ãƒ«æŒ‡å®š	
+						rPoint.x,								// x
+						rPoint.y, 								// y
+						width, 									// å¹…
+						height,									// é«˜ã•
+						g_frmMain, 								// è¦ªã‚¦ã‚£ãƒ³ãƒ‰ã‚¦
+						NULL, 		// ãƒ¡ãƒ‹ãƒ¥ãƒ¼ãƒãƒ³ãƒ‰ãƒ«ã¾ãŸã¯å­ã‚¦ã‚£ãƒ³ãƒ‰ã‚¦ID
+						hInstance, 								// ã‚¤ãƒ³ã‚¹ã‚¿ãƒ³ã‚¹ãƒãƒ³ãƒ‰ãƒ«
+						NULL									// ãã®ä»–ã®ä½œæˆãƒ‡ãƒ¼ã‚¿
 					);
 
 	HFONT hFont = SetFont(_T("Myrica M"), 16);
@@ -181,41 +190,44 @@ static HWND CreateButton(HWND hWnd, POINT point, int width, int height, TCHAR ca
 
 static HFONT SetFont(LPCTSTR fontName, int fontSize) {
 	HFONT hFont = CreateFont(
-					fontSize,				// ƒtƒHƒ“ƒg‚‚³
-					0,						// •¶š•
-					0,		                // ƒeƒLƒXƒg‚ÌŠp“x
-					0,						// ƒx[ƒXƒ‰ƒCƒ“‚Æ‚˜²‚Æ‚ÌŠp“x
-					FW_REGULAR,				// ƒtƒHƒ“ƒg‚Ìd‚³i‘¾‚³j
-					FALSE,					// ƒCƒ^ƒŠƒbƒN‘Ì
-					FALSE,					// ƒAƒ“ƒ_[ƒ‰ƒCƒ“
-					FALSE,					// ‘Å‚¿Á‚µü
-					SHIFTJIS_CHARSET,		// •¶šƒZƒbƒg
-					OUT_DEFAULT_PRECIS,		// o—Í¸“x
-					CLIP_DEFAULT_PRECIS,	// ƒNƒŠƒbƒsƒ“ƒO¸“x
-					PROOF_QUALITY,			// o—Í•i¿
-					FIXED_PITCH | FF_MODERN,// ƒsƒbƒ`‚Æƒtƒ@ƒ~ƒŠ[
-					fontName				// ‘‘Ì–¼
-				);					
+					fontSize,				// ãƒ•ã‚©ãƒ³ãƒˆé«˜ã•
+					0,						// æ–‡å­—å¹…
+					0,		                // ãƒ†ã‚­ã‚¹ãƒˆã®è§’åº¦
+					0,						// ãƒ™ãƒ¼ã‚¹ãƒ©ã‚¤ãƒ³ã¨ï½˜è»¸ã¨ã®è§’åº¦
+					FW_REGULAR,				// ãƒ•ã‚©ãƒ³ãƒˆã®é‡ã•ï¼ˆå¤ªã•ï¼‰
+					FALSE,					// ã‚¤ã‚¿ãƒªãƒƒã‚¯ä½“
+					FALSE,					// ã‚¢ãƒ³ãƒ€ãƒ¼ãƒ©ã‚¤ãƒ³
+					FALSE,					// æ‰“ã¡æ¶ˆã—ç·š
+					SHIFTJIS_CHARSET,		// æ–‡å­—ã‚»ãƒƒãƒˆ
+					OUT_DEFAULT_PRECIS,		// å‡ºåŠ›ç²¾åº¦
+					CLIP_DEFAULT_PRECIS,	// ã‚¯ãƒªãƒƒãƒ”ãƒ³ã‚°ç²¾åº¦
+					PROOF_QUALITY,			// å‡ºåŠ›å“è³ª
+					FIXED_PITCH | FF_MODERN,// ãƒ”ãƒƒãƒã¨ãƒ•ã‚¡ãƒŸãƒªãƒ¼
+					fontName				// æ›¸ä½“å
+				);
 	return hFont;
 }
 
 //-------------------------------------------------------------
 //
-//	ƒƒbƒZ[ƒWˆ—
+//	ãƒ¡ãƒƒã‚»ãƒ¼ã‚¸å‡¦ç†
 //
 //-------------------------------------------------------------
 static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
 	switch (msg) {
+		case WM_CREATE:
+			SetFocus(g_txtMag);
+			return 0;
 		case WM_PAINT:
-			Draw(hWnd);
+			Draw();
 			return 0;
 		case WM_CTLCOLOREDIT:
-		case  WM_CTLCOLORSTATIC:
+		case WM_CTLCOLORSTATIC:
 		{
 			HWND hw = (HWND)lp;
 			if (hw == g_txtMag || hw == g_txtAccountId) {
 				SetBkColor((HDC)wp, RGB(245, 245, 245));
-			} else if (hw == g_txtCompany || hw == g_txtName || hw == g_txtNumber) {
+			} else if (hw == g_txtCompany || hw == g_txtNameOnCard || hw == g_txtCardNumber) {
 				SetBkColor((HDC)wp, RGB(176, 196, 222));
 			}
 
@@ -225,16 +237,24 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
 		{
 			HWND hw = (HWND)lp;
 			if (hw == g_btnVerificate) {
-
+				OnBtnVerificateClicked();
 			} else if (hw == g_btnClear) {
 				SetWindowText(g_txtMag, _T(""));
 				SetWindowText(g_txtCompany, _T(""));
-				SetWindowText(g_txtName, _T(""));
-				SetWindowText(g_txtNumber, _T(""));
+				SetWindowText(g_txtNameOnCard, _T(""));
+				SetWindowText(g_txtCardNumber, _T(""));
 				SetWindowText(g_txtAccountId, _T(""));
 			}
 			return 0;
 		}
+		case WM_CHAR:
+			// Enterã‚­ãƒ¼æŠ¼ä¸‹æ™‚ã¯ç…§åˆãƒœã‚¿ãƒ³æŠ¼ä¸‹æ™‚ã¨åŒæ§˜ã®å‡¦ç†ã‚’è¡Œã†
+			if (wp == VK_RETURN) {
+				OnBtnVerificateClicked();
+				return 0;
+			} else {
+				break;
+			}
 		case WM_DESTROY:
 			PostQuitMessage(0);
 			return 0;
@@ -244,3 +264,190 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
 	return DefWindowProc(hWnd, msg, wp, lp);
 }
 
+LRESULT CALLBACK EditWindowProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
+	// Enterã‚­ãƒ¼æŠ¼ä¸‹æ™‚ã¯ç…§åˆãƒœã‚¿ãƒ³æŠ¼ä¸‹æ™‚ã¨åŒæ§˜ã®å‡¦ç†ã‚’è¡Œã†
+	if (msg == WM_KEYDOWN && wp == VK_RETURN) {
+		OnBtnVerificateClicked();
+		return 0;
+	}
+	return CallWindowProc(g_defEditWndProc, hWnd, msg, wp, lp);
+}
+
+static void OnBtnVerificateClicked() {
+	TCHAR txtMagStr[LENGTH_OF_MAG];
+	ZeroMemory(&txtMagStr, sizeof(txtMagStr));
+	GetWindowText(g_txtMag, (LPTSTR)txtMagStr, sizeof(txtMagStr) / sizeof(TCHAR));
+
+	int accountId;
+	if (!Validate(txtMagStr, &accountId)) {
+		SetWindowText(g_txtCompany, _T(""));
+		SetWindowText(g_txtNameOnCard, _T(""));
+		SetWindowText(g_txtCardNumber, _T(""));
+		return;
+	}
+
+	/* *ï½*å†…ã‚’å–ã‚Šå‡ºã— */
+	int startPos = INT_MAX;
+	for (int i = 0; i < _tcslen(txtMagStr); ++i) {
+		if (txtMagStr[i] == _T('*')) {
+			startPos = i + 1;
+			break;
+		}
+	}
+
+	int endPos = INT_MAX;
+	for (int i = static_cast<int>(_tcslen(txtMagStr)) - 1; i > 0; --i) {
+		if (txtMagStr[i] == _T('*')) {
+			endPos = i - 1;
+			break;
+		}
+	}
+	TCHAR magStr[LENGTH_OF_MAG];
+	ZeroMemory(&magStr, sizeof(magStr));
+	memcpy_s(magStr, sizeof(magStr), txtMagStr + startPos, sizeof(TCHAR) * (endPos - startPos + 1));
+
+	// ã‚«ãƒ¼ãƒ‰æƒ…å ±å–å¾—
+	TCHAR companyName[LENGTH_OF_COMPANY_NAME];
+	ZeroMemory(&companyName, sizeof(companyName));
+	TCHAR name[LENGTH_OF_NANE_ON_CARD];
+	ZeroMemory(&name, sizeof(name));
+	TCHAR number[LENGTH_OF_CARD_NUMBER];
+	ZeroMemory(&number, sizeof(number));
+	bool isSuccess = GetCard(accountId, magStr, companyName, name, number);
+	if (isSuccess) {
+		SetWindowText(g_txtCompany, companyName);
+		SetWindowText(g_txtNameOnCard, name);
+		SetWindowText(g_txtCardNumber, number);
+	} else {
+		MessageBox(g_frmMain, _T("DBæ¥ç¶šã«å¤±æ•—ã—ã¾ã—ãŸã€‚"), TITLE, MB_OK | MB_ICONERROR);
+	}
+}
+
+static bool Validate(LPCTSTR txtMagStr, int* pAccountId) {
+	bool ret = false;
+	*pAccountId = INT_MAX;
+
+	TCHAR accountIdStr[3];
+	ZeroMemory(&accountIdStr, sizeof(accountIdStr));
+	GetWindowText(g_txtAccountId, (LPTSTR)accountIdStr, 3);
+
+	size_t magLength = _tcslen(txtMagStr);
+	if (magLength > 60 && txtMagStr[magLength - 1] == _T('*')) {
+		size_t accountIdLength = _tcslen(accountIdStr);
+		ret = (accountIdLength > 0);
+		for (size_t i = 0; ret && i < accountIdLength; ++i) {
+			ret = (_istdigit(accountIdStr[i]) != 0);
+		}
+
+		if (ret) {
+			*pAccountId = _ttoi(accountIdStr);
+		} else {
+			MessageBox(g_frmMain, _T("ã‚¢ã‚«ã‚¦ãƒ³ãƒˆIDãŒæ­£ã—ãã‚ã‚Šã¾ã›ã‚“ã€‚"), TITLE, MB_OK | MB_ICONEXCLAMATION);
+		}
+	}
+	return ret;
+}
+
+static bool GetCard(int accountId, LPCTSTR magStr, LPTSTR companyName, LPTSTR nameOnCard, LPTSTR cardNumber) {
+	bool ret = false;
+
+	const char host[] = "s.apps.clip-card.com";
+	const char user[] = "select_only";
+	const char password[] = "";
+	const char dbname[] = "clip_database_staging";
+	int port = 51433;
+	CHAR query[] = "select company_name, name, number from cards where account_id = ? and magnetic_back = ? and deleted_at is null;";
+
+	// DBæ¥ç¶š
+	MYSQL* pMysql = mysql_init(0);
+	if (mysql_real_connect(pMysql, host, user, password, dbname, 51433, NULL, 0) == NULL) {
+		OutputDebugString(_T(mysql_error(pMysql)));
+		OutputDebugString(_T("\n"));
+		return false;
+	}
+
+	// ãƒ‘ãƒ©ãƒ¡ãƒ¼ã‚¿è¨­å®š
+	MYSQL_STMT* pStmt = mysql_stmt_init(pMysql);
+	if (!pStmt) {
+		mysql_close(pMysql);
+		return false;
+	}
+	if (mysql_stmt_prepare(pStmt, query, static_cast<ULONG>(strlen(query)))) {
+		mysql_close(pMysql);
+		return false;
+	}
+	MYSQL_BIND bind[2];
+	bind[0].buffer_type = MYSQL_TYPE_LONG;
+	bind[0].buffer = &accountId;
+	bind[0].is_null = 0;
+
+	bind[1].buffer_type = MYSQL_TYPE_STRING;
+	bind[1].buffer = (TCHAR*)magStr;
+	bind[1].buffer_length = static_cast<ULONG>(_tcslen(magStr));
+	bind[1].is_null = 0;
+	ULONG strLen = static_cast<ULONG>(_tcslen(magStr));
+	bind[1].length = &strLen;
+
+	if (mysql_stmt_bind_param(pStmt, bind)) {
+		// ã‚¨ãƒ©ãƒ¼å‡¦ç†
+		OutputDebugString(_T(mysql_stmt_error(pStmt)));
+		OutputDebugString(_T("\n"));
+		mysql_close(pMysql);
+		return false;
+	}
+
+	// SQLç™ºè¡Œ
+	if (mysql_stmt_execute(pStmt)) {
+		OutputDebugString(_T(mysql_error(pMysql)));
+		OutputDebugString(_T("\n"));
+		mysql_close(pMysql);
+		return false;
+	}
+
+	// å–å¾—çµæœæ ¼ç´ç”¨ãƒãƒƒãƒ•ã‚¡è¨­å®š
+	MYSQL_BIND result[3];
+	ULONG length[3];
+	my_bool isError[3];
+	result[0].buffer_type = MYSQL_TYPE_STRING;
+	CHAR tmpCompanyName[LENGTH_OF_COMPANY_NAME];
+	result[0].buffer = &tmpCompanyName;
+	result[0].is_null = 0;
+	result[0].buffer_length = sizeof(tmpCompanyName);
+	result[0].length = &length[0];
+	result[0].error = &isError[0];
+
+	result[1].buffer_type = MYSQL_TYPE_STRING;
+	CHAR tmpNameOnCard[LENGTH_OF_NANE_ON_CARD];
+	result[1].buffer = &tmpNameOnCard;
+	result[1].is_null = 0;
+	result[1].buffer_length = sizeof(tmpNameOnCard);
+	result[1].length = &length[1];
+	result[1].error = &isError[1];
+
+	result[2].buffer_type = MYSQL_TYPE_STRING;
+	CHAR tmpCardNumber[LENGTH_OF_CARD_NUMBER];
+	result[2].buffer = &tmpCardNumber;
+	result[2].is_null = 0;
+	result[2].buffer_length = sizeof(tmpCardNumber);
+	result[2].length = &length[2];
+	result[2].error = &isError[2];
+
+	if (mysql_stmt_bind_result(pStmt, result)) {
+		// ã‚¨ãƒ©ãƒ¼å‡¦ç†
+		OutputDebugString(_T(mysql_stmt_error(pStmt)));
+		OutputDebugString(_T("\n"));
+		mysql_close(pMysql);
+	}
+
+	// 1ãƒ¬ã‚³ãƒ¼ãƒ‰ç›®ã®ãƒ‡ãƒ¼ã‚¿ã‚’å–å¾—
+	if (!mysql_stmt_fetch(pStmt)) {
+		_stprintf_s(companyName, LENGTH_OF_COMPANY_NAME - 1, _T("%s"), tmpCompanyName);
+		_stprintf_s(nameOnCard, LENGTH_OF_NANE_ON_CARD - 1, _T("%s"), tmpNameOnCard);
+		_stprintf_s(cardNumber, LENGTH_OF_CARD_NUMBER - 1, _T("%s"), tmpCardNumber);
+		ret = true;
+	}
+	
+	// åˆ‡æ–­
+	mysql_close(pMysql);
+	return ret;
+}
