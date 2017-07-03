@@ -137,7 +137,17 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="AppCommon.cpp" />
+    <ClCompile Include="BizMain.cpp" />
+    <ClCompile Include="FormUtil.cpp" />
+    <ClCompile Include="FrmMain.cpp" />
     <ClCompile Include="Main.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="AppCommon.h" />
+    <ClInclude Include="BizMain.h" />
+    <ClInclude Include="FormUtil.h" />
+    <ClInclude Include="FrmMain.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
